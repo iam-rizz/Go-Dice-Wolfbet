@@ -1,0 +1,8 @@
+# wdb-go config template — copy ke wdbgo.toml.local lalu isi
+# (wdbgo.toml.local sudah ada di .gitignore, jadi aman untuk secret.
+# Predecence flag > env > TOML > default.)
+token = ""
+user_hash = ""
+currency = "trx"
+# base_url = "https://wolfbet.com"
+# max_bets = 20
