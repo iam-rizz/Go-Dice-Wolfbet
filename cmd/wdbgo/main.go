@@ -117,6 +117,13 @@ func run() error {
 	}), "wolfbet.com")
 	defer bridge.Close()
 
+	// Inject state BEFORE loading the script so top-level reads of
+	// balance/chance/etc. work — the original web bot also runs the script
+	// with all Lua globals already set (bridge.go only injects inside
+	// RunDobet otherwise, which is too late for top-level assignment).
+	if err := bridge.InjectState(); err != nil {
+		return fmt.Errorf("script failed to load: %w", err)
+	}
 	if err := bridge.LoadUserScript(string(rawScript)); err != nil {
 		return fmt.Errorf("script failed to load: %w", err)
 	}
