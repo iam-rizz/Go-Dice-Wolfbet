@@ -59,8 +59,11 @@ type Model struct {
 	Losses        int
 	Winstreak     int
 	Losestreak    int
+	MaxWinstreak  int
+	MaxLosestreak int
 	Currentstreak int
 	Wagered       float64
+	Chance        float64
 	CurrentBet    float64
 	RateLimit     int
 	Speed         float64
@@ -124,8 +127,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Losses = s.Losses
 		m.Winstreak = s.Winstreak
 		m.Losestreak = s.Losestreak
+		m.MaxWinstreak = s.Maxwinstreak
+		m.MaxLosestreak = s.Maxlosestreak
 		m.Currentstreak = s.Currentstreak
 		m.Wagered = s.Wagered
+		m.Chance = s.Chance
 		m.CurrentBet = s.Nextbet
 		m.RateLimit = msg.RateLimit
 		m.Speed = msg.Speed
@@ -173,8 +179,17 @@ func (m Model) statsView() string {
 		profit = styleProfitDown.Render(profit)
 	}
 	streak := formatInt(m.Winstreak) + "/" + formatInt(m.Losestreak)
+	maxStreak := formatInt(m.MaxWinstreak) + "/" + formatInt(m.MaxLosestreak)
+
+	var winrate string
+	if m.Bets > 0 {
+		winrate = strconv.FormatFloat(float64(m.Wins)/float64(m.Bets)*100, 'f', 1, 64) + "%"
+	} else {
+		winrate = "-"
+	}
+
 	lines := []string{
-		styleTitle.Render("wdb-go — " + m.ScriptName),
+		styleTitle.Render("xWDice — " + m.ScriptName),
 		"mode:     " + m.Mode,
 		"currency: " + m.Currency,
 		"",
@@ -182,10 +197,13 @@ func (m Model) statsView() string {
 		"profit:   " + profit,
 		"wagered:  " + formatFloat(m.Wagered),
 		"",
+		"chance:   " + formatFloat(m.Chance),
 		"bets:     " + formatInt(m.Bets),
 		"wins:     " + formatInt(m.Wins),
 		"losses:   " + formatInt(m.Losses),
+		"winrate:  " + winrate,
 		"streak:   " + streak,
+		"max strk: " + maxStreak,
 		"current:  " + formatFloat(m.CurrentBet),
 		"",
 		"speed:    " + formatFloat(m.Speed) + " bets/s",
