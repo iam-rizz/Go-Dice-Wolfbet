@@ -15,6 +15,7 @@ type BetOutcome struct {
 	Roll               float64
 	Profit             float64
 	Won                bool
+	Target             float64
 	Nonce              int64
 	ID                 string
 	Amount             float64
