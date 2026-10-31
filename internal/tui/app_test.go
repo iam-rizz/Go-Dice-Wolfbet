@@ -60,7 +60,7 @@ func TestStatsMsgInView(t *testing.T) {
 	st.Balance = 55.5
 	model, _ := m.Update(StatsMsg{State: st, RateLimit: 87, Speed: 9.5})
 	view := model.(Model).View()
-	for _, want := range []string{"42", "55.5", "87", "9.5"} {
+	for _, want := range []string{"42", "55.5", "9.50", "max strk"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view missing %q:\n%s", want, view)
 		}

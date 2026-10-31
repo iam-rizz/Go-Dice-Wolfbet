@@ -179,7 +179,7 @@ func (m Model) statsView() string {
 		profit = styleProfitDown.Render(profit)
 	}
 	streak := formatInt(m.Winstreak) + "/" + formatInt(m.Losestreak)
-	maxStreak := formatInt(m.MaxWinstreak) + "/" + formatInt(m.MaxLosestreak)
+	maxStreak := formatInt(m.MaxLosestreak) + " L / " + formatInt(m.MaxWinstreak) + " W"
 
 	var winrate string
 	if m.Bets > 0 {
@@ -206,8 +206,7 @@ func (m Model) statsView() string {
 		"max strk: " + maxStreak,
 		"current:  " + formatFloat(m.CurrentBet),
 		"",
-		"speed:    " + formatFloat(m.Speed) + " bets/s",
-		"rate:     " + formatInt(m.RateLimit) + " remaining",
+		"speed:    " + strconv.FormatFloat(m.Speed, 'f', 2, 64) + " bets/s",
 	}
 	if m.Status != StatusRunning {
 		lines = append(lines, "", "status:   "+m.Status+statusSuffix(m))
