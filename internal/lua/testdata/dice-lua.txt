@@ -1,0 +1,16 @@
+--scriptname='example LUA script'
+chance=49.5
+bethigh=true
+basebet=0.00000001
+nextbet=basebet
+-- currency='trx'
+
+function dobet()
+  -- log('profit: '..profit)
+  -- sleep(0.2)
+  if (win) then
+    nextbet=basebet
+  else
+    nextbet=previousbet*2
+  end
+end
