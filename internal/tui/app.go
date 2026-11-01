@@ -56,6 +56,8 @@ type Model struct {
 	// stats snapshot
 	Balance        float64
 	StartBalance   float64
+	Minbalance     float64
+	Win            bool
 	Profit         float64
 	PercentProfit  float64
 	Bets           int
@@ -131,6 +133,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s := msg.State
 		m.Balance = s.Balance
 		m.StartBalance = s.StartBalance
+		m.Minbalance = s.Minbalance
+		m.Win = s.Win
 		m.Profit = s.Profit
 		m.PercentProfit = s.PercentProfit
 		m.Bets = s.Bets
@@ -188,13 +192,32 @@ func (m Model) View() string {
 }
 
 func (m Model) statsView() string {
+	// profit: green when positive, red when negative (percent follows)
 	profit := formatFloat(m.Profit)
-	if m.Profit > 0 {
+	profitPct := strconv.FormatFloat(m.PercentProfit, 'f', 2, 64) + "%"
+	switch {
+	case m.Profit > 0:
 		profit = styleProfitUp.Render("+" + profit)
-	} else if m.Profit < 0 {
+	case m.Profit < 0:
 		profit = styleProfitDown.Render(profit)
 	}
-	profitPct := strconv.FormatFloat(m.PercentProfit, 'f', 2, 64) + "%"
+	profitPct = colorSigned(m.PercentProfit, profitPct)
+
+	// current bet: green after a win, red after a loss
+	current := formatFloat(m.CurrentBet)
+	if m.Bets > 0 {
+		if m.Win {
+			current = styleProfitUp.Render(current)
+		} else {
+			current = styleProfitDown.Render(current)
+		}
+	}
+
+	wagered := formatFloat(m.Wagered)
+	if pct := percentOf(m.Wagered, m.StartBalance); pct != "" {
+		wagered += " (" + colorSigned(m.Wagered, pct) + ")"
+	}
+
 	streak := formatInt(m.Winstreak) + "/" + formatInt(m.Losestreak)
 	maxStreak := formatInt(m.MaxLosestreak) + " L / " + formatInt(m.MaxWinstreak) + " W"
 
@@ -212,7 +235,7 @@ func (m Model) statsView() string {
 		"",
 		"balance:  " + formatFloat(m.Balance),
 		"profit:   " + profit + " (" + profitPct + ")",
-		"wagered:  " + formatFloat(m.Wagered),
+		"wagered:  " + wagered,
 		"",
 		"chance:   " + formatFloat(m.Chance),
 		"bets:     " + formatInt(m.Bets),
@@ -221,9 +244,9 @@ func (m Model) statsView() string {
 		"winrate:  " + winrate,
 		"streak:   " + streak,
 		"max strk: " + maxStreak,
-		"current:  " + formatFloat(m.CurrentBet),
+		"current:  " + current,
 		"max bet:  " + formatAmountPct(m.MaxBetAmount, m.StartBalance),
-		"max lose: " + formatAmountPct(m.MaxLosseAmount, m.StartBalance),
+		"max lose: " + m.maxLoseView(),
 		"min prof: " + formatAmountPct(m.Minprofit, m.StartBalance),
 		"max prof: " + formatAmountPct(m.Maxprofit, m.StartBalance),
 		"",
@@ -296,6 +319,43 @@ func formatAmountPct(v, base float64) string {
 	}
 	pct := v / base * 100
 	return formatFloat(v) + " (" + strconv.FormatFloat(pct, 'f', 2, 64) + "%)"
+}
+
+// maxLoseView renders the lowest balance reached while losing, with the
+// drawdown from the starting balance in parentheses (negative). Minbalance
+// is seeded with the starting balance, so it is only meaningful once at
+// least one loss has happened — before that it shows "-".
+func (m Model) maxLoseView() string {
+	if m.Losses == 0 {
+		return "-"
+	}
+	out := formatFloat(m.Minbalance)
+	if m.StartBalance != 0 {
+		dd := (m.Minbalance - m.StartBalance) / m.StartBalance * 100
+		out += " (" + colorSigned(dd, strconv.FormatFloat(dd, 'f', 2, 64)+"%") + ")"
+	}
+	return out
+}
+
+// percentOf renders v as a percentage of base, or "" when base is unknown.
+func percentOf(v, base float64) string {
+	if base == 0 {
+		return ""
+	}
+	return strconv.FormatFloat(v/base*100, 'f', 2, 64) + "%"
+}
+
+// colorSigned tints a rendered string green when the value is positive and
+// red when negative; zero is left uncolored.
+func colorSigned(v float64, s string) string {
+	switch {
+	case v > 0:
+		return styleProfitUp.Render(s)
+	case v < 0:
+		return styleProfitDown.Render(s)
+	default:
+		return s
+	}
 }
 
 // formatDuration renders a run time as H:MM:SS (or M:SS under an hour).
