@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -63,16 +64,19 @@ func run() error {
 	hasCreds := cfg.Token != "" && cfg.UserHash != ""
 	if hasCreds {
 		client = wolfbet.New(cfg.BaseURL, cfg.Token, cfg.UserHash)
+		// Fetch the real wallet balance in live mode too — the TUI and the
+		// script's top-level reads must show the actual currency balance,
+		// not the paper default. Fall back to paper balance only if the call
+		// fails.
+		bal, err := fetchBalance(ctx, client, st.Currency)
+		if err == nil {
+			startBalance = bal
+		} else {
+			fmt.Fprintf(os.Stderr, "wdbgo: could not read %s balance (%v), using paper balance %v\n",
+				st.Currency, err, dryRunPaperBalance)
+		}
 	}
 	if cfg.DryRun {
-		if hasCreds {
-			bal, err := fetchBalance(ctx, client, st.Currency)
-			if err == nil {
-				startBalance = bal
-			} else {
-				fmt.Fprintf(os.Stderr, "wdbgo: dry-run could not read balance (%v), using paper balance %v\n", err, dryRunPaperBalance)
-			}
-		}
 		placer = dryrun.New(cfg.Seed, startBalance)
 	} else {
 		placer = &wolfPlacer{client: client}
@@ -131,6 +135,14 @@ func run() error {
 
 	// top-level assignments land in state BEFORE bet 1 (original sequencing)
 	lua.ApplyReturns(st, bridge.CollectReturns())
+
+	// ---- pre-start confirmation ----------------------------------------
+	// Show what is about to run and ask before betting real money.
+	if !cfg.DryRun {
+		if err := confirmBeforeStart(st, cfg.Script, cfg.MaxBets); err != nil {
+			return err
+		}
+	}
 
 	script := &scriptRunner{bridge: bridge, st: st}
 
@@ -337,4 +349,29 @@ func printSummary(st *state.BotState, reason string) {
 		fmt.Printf("stopped:   %s\n", reason)
 	}
 	fmt.Println("─────────────────────────────────")
+}
+
+// confirmBeforeStart prints what is about to run (script, currency, initial
+// balance, first bet) and asks for an explicit yes before placing real bets.
+// Returning an error aborts the run. Skipped in dry-run.
+func confirmBeforeStart(st *state.BotState, scriptPath string, maxBets int) error {
+	fmt.Println("──────── konfirmasi sebelum mulai ────────")
+	fmt.Printf("mode:     live\n")
+	fmt.Printf("script:   %s\n", scriptPath)
+	fmt.Printf("currency: %s\n", st.Currency)
+	fmt.Printf("balance:  %.8f\n", st.Balance)
+	fmt.Printf("chance:   %v\n", st.Chance)
+	fmt.Printf("first bet: %.8f\n", st.Nextbet)
+	fmt.Printf("bets max:  %d\n", maxBets)
+	fmt.Println("script menempel — pastikan kamu sudah menguji dry-run dulu!")
+	fmt.Print("Lanjut live betting? [y/N]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	if answer != "y" && answer != "yes" {
+		return fmt.Errorf("dibatalkan pengguna — tidak ada bet yang ditempatkan")
+	}
+	fmt.Println("──────── mulai ────────")
+	return nil
 }
