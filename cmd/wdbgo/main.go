@@ -161,12 +161,17 @@ func run() error {
 		Callbacks: engine.LoopCallbacks{
 			OnLog: func(msg string) { program.Send(tui.LogMsg(msg)) },
 			OnStats: func(s *state.BotState) {
-				elapsed := time.Since(startedAt).Seconds()
+				elapsed := time.Since(startedAt)
 				speed := 0.0
-				if elapsed > 0 {
-					speed = float64(s.Bets) / elapsed
+				if secs := elapsed.Seconds(); secs > 0 {
+					speed = float64(s.Bets) / secs
 				}
-				program.Send(tui.StatsMsg{State: s, RateLimit: loop.RateLimit(), Speed: speed})
+				program.Send(tui.StatsMsg{
+					State:     s,
+					RateLimit: loop.RateLimit(),
+					Speed:     speed,
+					Elapsed:   elapsed,
+				})
 			},
 			OnStop: func(reason string) {
 				stopReason = reason

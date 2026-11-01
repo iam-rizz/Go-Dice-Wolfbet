@@ -5,6 +5,7 @@ package tui
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -21,7 +22,8 @@ type (
 	StatsMsg struct {
 		State     *state.BotState
 		RateLimit int
-		Speed     float64 // bets per second
+		Speed     float64       // bets per second
+		Elapsed   time.Duration // total wall-clock run time
 	}
 	// LogMsg is one script log()/system line.
 	LogMsg string
@@ -52,21 +54,28 @@ type Model struct {
 	Err        string
 
 	// stats snapshot
-	Balance       float64
-	Profit        float64
-	Bets          int
-	Wins          int
-	Losses        int
-	Winstreak     int
-	Losestreak    int
-	MaxWinstreak  int
-	MaxLosestreak int
-	Currentstreak int
-	Wagered       float64
-	Chance        float64
-	CurrentBet    float64
-	RateLimit     int
-	Speed         float64
+	Balance        float64
+	StartBalance   float64
+	Profit         float64
+	PercentProfit  float64
+	Bets           int
+	Wins           int
+	Losses         int
+	Winstreak      int
+	Losestreak     int
+	MaxWinstreak   int
+	MaxLosestreak  int
+	Currentstreak  int
+	Wagered        float64
+	Chance         float64
+	CurrentBet     float64
+	MaxBetAmount   float64
+	MaxLosseAmount float64
+	Minprofit      float64
+	Maxprofit      float64
+	RateLimit      int
+	Speed          float64
+	Elapsed        time.Duration
 
 	StopOnWin bool
 
@@ -121,7 +130,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StatsMsg:
 		s := msg.State
 		m.Balance = s.Balance
+		m.StartBalance = s.StartBalance
 		m.Profit = s.Profit
+		m.PercentProfit = s.PercentProfit
 		m.Bets = s.Bets
 		m.Wins = s.Wins
 		m.Losses = s.Losses
@@ -133,8 +144,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Wagered = s.Wagered
 		m.Chance = s.Chance
 		m.CurrentBet = s.Nextbet
+		m.MaxBetAmount = s.MaxBetAmount
+		m.MaxLosseAmount = s.MaxLosseAmount
+		m.Minprofit = s.Minprofit
+		m.Maxprofit = s.Maxprofit
 		m.RateLimit = msg.RateLimit
 		m.Speed = msg.Speed
+		m.Elapsed = msg.Elapsed
 		m.Status = StatusRunning
 		return m, nil
 	case LogMsg:
@@ -178,6 +194,7 @@ func (m Model) statsView() string {
 	} else if m.Profit < 0 {
 		profit = styleProfitDown.Render(profit)
 	}
+	profitPct := strconv.FormatFloat(m.PercentProfit, 'f', 2, 64) + "%"
 	streak := formatInt(m.Winstreak) + "/" + formatInt(m.Losestreak)
 	maxStreak := formatInt(m.MaxLosestreak) + " L / " + formatInt(m.MaxWinstreak) + " W"
 
@@ -194,7 +211,7 @@ func (m Model) statsView() string {
 		"currency: " + m.Currency,
 		"",
 		"balance:  " + formatFloat(m.Balance),
-		"profit:   " + profit,
+		"profit:   " + profit + " (" + profitPct + ")",
 		"wagered:  " + formatFloat(m.Wagered),
 		"",
 		"chance:   " + formatFloat(m.Chance),
@@ -205,7 +222,12 @@ func (m Model) statsView() string {
 		"streak:   " + streak,
 		"max strk: " + maxStreak,
 		"current:  " + formatFloat(m.CurrentBet),
+		"max bet:  " + formatAmountPct(m.MaxBetAmount, m.StartBalance),
+		"max lose: " + formatAmountPct(m.MaxLosseAmount, m.StartBalance),
+		"min prof: " + formatAmountPct(m.Minprofit, m.StartBalance),
+		"max prof: " + formatAmountPct(m.Maxprofit, m.StartBalance),
 		"",
+		"time:     " + formatDuration(m.Elapsed),
 		"speed:    " + strconv.FormatFloat(m.Speed, 'f', 2, 64) + " bets/s",
 	}
 	if m.Status != StatusRunning {
@@ -262,5 +284,38 @@ func formatFloat(v float64) string {
 }
 
 func formatInt(v int) string {
+	return strconv.Itoa(v)
+}
+
+// formatAmountPct renders a coin amount with its share of the starting
+// balance, e.g. "0.04 (0.00%)" — so the user can see how big a bet or a
+// drawdown is relative to the wallet. Base 0 (unknown) omits the percent.
+func formatAmountPct(v, base float64) string {
+	if base == 0 {
+		return formatFloat(v)
+	}
+	pct := v / base * 100
+	return formatFloat(v) + " (" + strconv.FormatFloat(pct, 'f', 2, 64) + "%)"
+}
+
+// formatDuration renders a run time as H:MM:SS (or M:SS under an hour).
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	total := int(d.Seconds())
+	h := total / 3600
+	m := (total % 3600) / 60
+	s := total % 60
+	if h > 0 {
+		return strconv.Itoa(h) + ":" + pad2(m) + ":" + pad2(s)
+	}
+	return strconv.Itoa(m) + ":" + pad2(s)
+}
+
+func pad2(v int) string {
+	if v < 10 {
+		return "0" + strconv.Itoa(v)
+	}
 	return strconv.Itoa(v)
 }
