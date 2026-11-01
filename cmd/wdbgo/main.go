@@ -21,6 +21,7 @@ import (
 	"wdb-go/internal/config"
 	"wdb-go/internal/dryrun"
 	"wdb-go/internal/engine"
+	"wdb-go/internal/login"
 	"wdb-go/internal/lua"
 	"wdb-go/internal/stake"
 	"wdb-go/internal/state"
@@ -66,6 +67,14 @@ func run() error {
 	switch cfg.Casino {
 	case config.CasinoStake:
 		hasCreds = cfg.Session != ""
+		if !hasCreds {
+			// fall back to the cached session from wdbgo-login
+			if cached := login.LoadSession(); cached != "" {
+				cfg.Session = cached
+				hasCreds = true
+				fmt.Println("wdbgo: memakai session cache dari", login.Dir()+"/session")
+			}
+		}
 		if hasCreds {
 			sc := stake.New(cfg.BaseURL, cfg.Session)
 			api = stakeAPI{c: sc}

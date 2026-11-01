@@ -1,3 +1,4 @@
 .env
 *.toml.local
 /wdbgo
+/wdbgo-login
