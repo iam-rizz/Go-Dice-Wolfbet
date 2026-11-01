@@ -344,3 +344,35 @@ func TestLoopRateLimitExposed(t *testing.T) {
 		t.Errorf("rate limit = %d, want 42", loop.RateLimit())
 	}
 }
+
+// TestLoopDelayThrottlesBets: with Delay set, N bets must take at least
+// (N-1)*Delay (the first bet is not delayed).
+func TestLoopDelayThrottlesBets(t *testing.T) {
+	const delay = 20 * time.Millisecond
+	p := &mockPlacer{}
+	loop, _ := newTestLoop(p, nil, Options{MaxBets: 5, Backoff: time.Millisecond, Delay: delay})
+
+	start := time.Now()
+	loop.Run(context.Background())
+	elapsed := time.Since(start)
+
+	if len(p.requests) != 5 {
+		t.Fatalf("placed %d bets, want 5", len(p.requests))
+	}
+	min := 4 * delay // 5 bets → 4 inter-bet gaps
+	if elapsed < min {
+		t.Errorf("elapsed %v, want >= %v (delay not applied)", elapsed, min)
+	}
+}
+
+// TestLoopNoDelayIsFast: with Delay unset the loop runs back-to-back.
+func TestLoopNoDelayIsFast(t *testing.T) {
+	p := &mockPlacer{}
+	loop, _ := newTestLoop(p, nil, Options{MaxBets: 50, Backoff: time.Millisecond})
+
+	start := time.Now()
+	loop.Run(context.Background())
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("50 bets without delay took %v, want fast", elapsed)
+	}
+}

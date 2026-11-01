@@ -90,6 +90,7 @@ wdbgo [flags]
   --stop-on-win        berhenti setelah menang berikutnya
   --stop-on-loss       berhenti setelah kalah berikutnya
   --max-bets int       berhenti setelah N bet (0 = tanpa batas)
+  --delay int          jeda antar bet (ms), 0 = back-to-back
   --base-url string    base URL (default https://wolfbet.com)
 ```
 
@@ -168,6 +169,20 @@ Dua kolom:
 tmux new -s bot
 ./wdbgo --config wdbgo.toml.local --script scripts/example-martingale.lua
 ```
+
+### Rate limit & pacing
+
+Bot default **back-to-back** (secepat mungkin), dibatasi rate limit kasino.
+Kalau muncul `Wolf blocks fast betting, auto retry after 3s` (HTTP 429),
+tambahkan jeda antar bet:
+
+```bash
+./wdbgo --config wdbgo.toml.local --script scripts/example-martingale.lua --delay 200
+```
+
+- `--delay 200` = jeda 200 ms antar bet (≈5 bet/detik).
+- `--delay 0` (default) = back-to-back.
+- Jeda hanya berlaku antar bet normal; retry setelah 429 tetap pakai backoff 3s.
 
 ### Error handling
 

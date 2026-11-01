@@ -29,6 +29,10 @@ type Options struct {
 	MaxBets    int // 0 = unlimited
 	// Backoff after rate-limit/network errors; overridable in tests.
 	Backoff time.Duration
+	// Delay is a fixed pause between bets to stay under the casino rate
+	// limit (0 = back-to-back, the wolf bundle default). Retries after a
+	// 429 use Backoff instead of Delay.
+	Delay time.Duration
 }
 
 // Loop drives the betting iteration: dobet → snapshot → place →
@@ -79,6 +83,14 @@ func (l *Loop) Run(ctx context.Context) *state.BotState {
 			l.State.Previousbet = l.State.Nextbet
 			l.State.LastBet.Amount = l.State.Nextbet
 			l.firstBetPlaced = true
+
+			// throttle: pause between bets to stay under the casino rate
+			// limit (skipped on retries, which use Backoff instead)
+			if l.Options.Delay > 0 {
+				if !l.sleepDelay(ctx) {
+					return l.State
+				}
+			}
 		}
 
 		outcome, err := l.Placer.PlaceBet(ctx, BetRequest{
@@ -189,6 +201,18 @@ func (l *Loop) sleepBackoff(ctx context.Context) bool {
 		l.stop("interrupted")
 		return false
 	case <-time.After(l.Options.Backoff):
+		return true
+	}
+}
+
+// sleepDelay waits the inter-bet throttle duration; false means the context
+// was cancelled.
+func (l *Loop) sleepDelay(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		l.stop("interrupted")
+		return false
+	case <-time.After(l.Options.Delay):
 		return true
 	}
 }

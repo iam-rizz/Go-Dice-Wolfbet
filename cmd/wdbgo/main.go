@@ -139,7 +139,7 @@ func run() error {
 	// ---- pre-start confirmation ----------------------------------------
 	// Show what is about to run and ask before betting real money.
 	if !cfg.DryRun {
-		if err := confirmBeforeStart(st, cfg.Script, cfg.MaxBets); err != nil {
+		if err := confirmBeforeStart(st, cfg.Script, cfg.MaxBets, cfg.DelayMs); err != nil {
 			return err
 		}
 	}
@@ -156,6 +156,7 @@ func run() error {
 			StopOnWin:  cfg.StopOnWin,
 			StopOnLoss: cfg.StopOnLoss,
 			MaxBets:    cfg.MaxBets,
+			Delay:      time.Duration(cfg.DelayMs) * time.Millisecond,
 		},
 		Callbacks: engine.LoopCallbacks{
 			OnLog: func(msg string) { program.Send(tui.LogMsg(msg)) },
@@ -354,7 +355,7 @@ func printSummary(st *state.BotState, reason string) {
 // confirmBeforeStart prints what is about to run (script, currency, initial
 // balance, first bet) and asks for an explicit yes before placing real bets.
 // Returning an error aborts the run. Skipped in dry-run.
-func confirmBeforeStart(st *state.BotState, scriptPath string, maxBets int) error {
+func confirmBeforeStart(st *state.BotState, scriptPath string, maxBets, delayMs int) error {
 	fmt.Println("──────── konfirmasi sebelum mulai ────────")
 	fmt.Printf("mode:     live\n")
 	fmt.Printf("script:   %s\n", scriptPath)
@@ -363,6 +364,11 @@ func confirmBeforeStart(st *state.BotState, scriptPath string, maxBets int) erro
 	fmt.Printf("chance:   %v\n", st.Chance)
 	fmt.Printf("first bet: %.8f\n", st.Nextbet)
 	fmt.Printf("bets max:  %d\n", maxBets)
+	if delayMs > 0 {
+		fmt.Printf("delay:    %d ms antar bet\n", delayMs)
+	} else {
+		fmt.Printf("delay:    - (back-to-back)\n")
+	}
 	fmt.Println("script menempel — pastikan kamu sudah menguji dry-run dulu!")
 	fmt.Print("Lanjut live betting? [y/N]: ")
 

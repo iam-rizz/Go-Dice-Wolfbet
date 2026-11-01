@@ -32,6 +32,9 @@ type Config struct {
 	StopOnWin  bool
 	StopOnLoss bool
 	MaxBets    int
+	// DelayMs is a fixed pause between bets (milliseconds) to stay under
+	// the casino rate limit. 0 = back-to-back.
+	DelayMs int
 
 	ConfigFile string
 }
@@ -59,6 +62,7 @@ func Parse(args []string) (*Config, error) {
 	fs.BoolVar(&cfg.StopOnWin, "stop-on-win", false, "stop after the next win")
 	fs.BoolVar(&cfg.StopOnLoss, "stop-on-loss", false, "stop after the next loss")
 	fs.IntVar(&cfg.MaxBets, "max-bets", DefaultMaxBets, "stop after N bets (0 = unlimited)")
+	fs.IntVar(&cfg.DelayMs, "delay", 0, "pause between bets in milliseconds (0 = back-to-back)")
 	fs.StringVar(&cfg.BaseURL, "base-url", DefaultBaseURL, "wolfbet base URL")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -108,6 +112,9 @@ func (c *Config) Validate() error {
 	}
 	if c.MaxBets < 0 {
 		return fmt.Errorf("--max-bets must be >= 0")
+	}
+	if c.DelayMs < 0 {
+		return fmt.Errorf("--delay must be >= 0")
 	}
 	return nil
 }
