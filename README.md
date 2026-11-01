@@ -1,9 +1,16 @@
-# wdb-go — headless dice bot (Go) untuk wolfbet.com
+# wdb-go — headless dice bot (Go) untuk wolfbet.com & stake.com
 
 Bot dice (siap untuk limbo/keno/plinko di fase 2) yang jalan headless di
 terminal/VPS — menjalankan **script Lua** dengan kontrak 40+ state variable +
 16 bridge function. Script dice klasik (martingale, soft-martingale, strategi
 vault/drawdown) jalan **tanpa modifikasi**.
+
+Dua casino didukung lewat flag `--casino`:
+
+| Casino | Protokol | Auth |
+|---|---|---|
+| `wolfbet` (default) | REST | `Authorization: Bearer` + `x-hash-api` |
+| `stake` | GraphQL (`/_api/graphql`) | `x-access-token` (cookie `session`) |
 
 > Kontrak Lua: `chance`, `nextbet`, `bethigh`, `balance`, `profit`,
 > `winstreak`, `lastBet` (dual-case), `log()`, `stop()`, `checkbalance()`,
@@ -34,6 +41,9 @@ go build -o wdbgo ./cmd/wdbgo
 # live (memakai config):
 ./wdbgo --config wdbgo.toml.local --script scripts/example-martingale.lua --currency trx
 
+# live di stake.com:
+./wdbgo --casino stake --config wdbgo.toml.local --script scripts/example-martingale.lua --currency trx
+
 # dry-run (paper trading, tanpa kredensial):
 ./wdbgo --dry-run --script scripts/example-martingale.lua --currency trx
 
@@ -60,18 +70,19 @@ Jangan commit `wdbgo.toml.local` (sudah di `.gitignore`).
 
 ### Mengambil token & user_hash (sekali per login)
 
-1. Login ke wolfbet.com di Chrome, buka DevTools (F12 → Console).
-2. Token:
-   ```js
-   JSON.parse(localStorage.getItem("token")).value
-   ```
-3. user_hash:
-   ```js
-   intercomSettings.user_hash
-   ```
-4. Isi ke `wdbgo.toml.local`.
+**wolfbet** — login di Chrome, DevTools (F12 → Console):
+```js
+JSON.parse(localStorage.getItem("token")).value   // token
+intercomSettings.user_hash                        // user_hash
+```
 
-Kalau dapat 401 — token kedaluwarsa, ambil ulang.
+**stake** — login di Chrome, DevTools → Application → Cookies → `session`:
+```
+session   // nilai cookie-nya (panjang, diawali tanda "-" biasanya)
+```
+Atau dari Console: `document.cookie` lalu ambil nilai `session=...`.
+
+Kalau dapat 401 — kredensial kedaluwarsa, ambil ulang.
 
 ---
 
@@ -80,9 +91,11 @@ Kalau dapat 401 — token kedaluwarsa, ambil ulang.
 ```
 wdbgo [flags]
 
-  --config string      path TOML config (token, user_hash, currency)
-  --token string       bearer token      (env WDBGO_TOKEN)
-  --user-hash string   x-hash-api value  (env WDBGO_USER_HASH)
+  --config string      path TOML config (token, user_hash, session, currency)
+  --token string       wolfbet bearer token   (env WDBGO_TOKEN)
+  --user-hash string   wolfbet x-hash-api     (env WDBGO_USER_HASH)
+  --session string     stake session cookie   (env WDBGO_SESSION)
+  --casino string      casino: wolfbet|stake  (default "wolfbet")
   --currency string    coin: free/trx/doge/dll (default "trx")
   --script string      path ke script .lua (wajib)
   --dry-run            simulasi tanpa bet sungguhan
@@ -186,10 +199,19 @@ tambahkan jeda antar bet:
 
 ### Error handling
 
+**wolfbet:**
 - `429` terbatasi → backoff 3 detik otomatis (payload sama).
 - `"one bet at a time"` → retry langsung.
 - `400`/`422`/`401` → stop dengan pesan jelas.
-- Coin `free` didukung (string diteruskan apa adanya).
+
+**stake:**
+- `"Please slow down"` → retry otomatis setelah 1 detik.
+- `"an unknown error 294779"` / `"Please choose a new seed pair"` → seed
+  di-rotate (`RotateSeedPair`) lalu bet yang sama diulang.
+- Network error → retry langsung.
+- `400`/`401` → stop dengan pesan jelas.
+
+Coin `free` didukung (string diteruskan apa adanya).
 
 ---
 
@@ -242,6 +264,7 @@ cmd/wdbgo/        entrypoint (wiring config → bridge → engine → TUI)
 internal/state/   40+ state variable + ApplyBetResult (win/loss math)
 internal/lua/     bridge gopher-lua (16 fungsi) + compatibility chain
 internal/wolfbet/ client HTTP wolfbet (balances, seed, place bet)
+internal/stake/   client GraphQL stake (balances, seed, DiceRoll)
 internal/engine/  loop + BetPlacer abstraction (live / dry-run)
 internal/dryrun/  seeded simulator implementasi BetPlacer
 internal/config/  flags + env + TOML
@@ -257,6 +280,7 @@ scripts/          contoh script Lua user
 - [x] kompat chain Lua (`!=`, `!`, `+=`...)
 - [x] bridge gopher-lua: 16 fungsi + sleep asli + clock + getn
 - [x] adapter wolfbet dice (payload + error mapping lengkap)
+- [x] adapter stake dice (GraphQL DiceRoll + RotateSeedPair + retry)
 - [x] engine loop (backoff, stop conditions, SIGINT)
 - [x] dry-run simulator (house edge ±)
 - [x] TUI bubbletea — panel xWDice (chance, max streak, winrate, speed)

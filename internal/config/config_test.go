@@ -152,3 +152,73 @@ func TestMaxBetsNegative(t *testing.T) {
 		t.Fatal("negative max-bets must fail")
 	}
 }
+
+func TestCasinoDefaultsToWolfbet(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir)
+	cfg, err := Parse([]string{"--script", script, "--dry-run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Casino != CasinoWolfbet {
+		t.Errorf("casino = %q, want %q", cfg.Casino, CasinoWolfbet)
+	}
+}
+
+func TestStakeLiveNeedsSession(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir)
+	// stake live without session → error
+	if _, err := Parse([]string{"--script", script, "--casino", "stake"}); err == nil {
+		t.Fatal("stake live mode without session must fail")
+	}
+	// with session → ok, and wolfbet creds are not required
+	cfg, err := Parse([]string{"--script", script, "--casino", "stake", "--session", "sess-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Session != "sess-1" {
+		t.Errorf("session = %q", cfg.Session)
+	}
+	// dry-run skips the session requirement
+	if _, err := Parse([]string{"--script", script, "--casino", "stake", "--dry-run"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUnknownCasinoRejected(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir)
+	if _, err := Parse([]string{"--script", script, "--casino", "roobet"}); err == nil {
+		t.Fatal("unknown casino must fail")
+	}
+}
+
+func TestSessionFromEnvAndToml(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir)
+	t.Setenv(EnvSession, "env-sess")
+	cfg, err := Parse([]string{"--script", script, "--casino", "stake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Session != "env-sess" {
+		t.Errorf("session = %q, want env-sess", cfg.Session)
+	}
+
+	tomlPath := filepath.Join(dir, "wdbgo.toml")
+	if err := os.WriteFile(tomlPath, []byte("session = \"toml-sess\"\ncasino = \"stake\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Unsetenv(EnvSession)
+	cfg2, err := Parse([]string{"--script", script, "--config", tomlPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg2.Session != "toml-sess" {
+		t.Errorf("session = %q, want toml-sess", cfg2.Session)
+	}
+	if cfg2.Casino != CasinoStake {
+		t.Errorf("casino = %q, want stake", cfg2.Casino)
+	}
+}

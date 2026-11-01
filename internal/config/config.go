@@ -24,6 +24,8 @@ type Config struct {
 	BaseURL  string
 	Token    string
 	UserHash string
+	Session  string // stake session cookie value
+	Casino   string // "wolfbet" | "stake"
 	Currency string
 	Script   string // path to the .lua script
 	DryRun   bool
@@ -43,6 +45,13 @@ type Config struct {
 const (
 	EnvToken    = "WDBGO_TOKEN"
 	EnvUserHash = "WDBGO_USER_HASH"
+	EnvSession  = "WDBGO_SESSION"
+)
+
+// Supported casinos.
+const (
+	CasinoWolfbet = "wolfbet"
+	CasinoStake   = "stake"
 )
 
 // Parse builds the config from args (normally os.Args[1:]). Returns the
@@ -55,6 +64,8 @@ func Parse(args []string) (*Config, error) {
 	fs.StringVar(&cfg.ConfigFile, "config", "", "TOML config file (token, user_hash, currency)")
 	fs.StringVar(&cfg.Token, "token", "", "wolfbet bearer token (env "+EnvToken+")")
 	fs.StringVar(&cfg.UserHash, "user-hash", "", "wolfbet x-hash-api value (env "+EnvUserHash+")")
+	fs.StringVar(&cfg.Session, "session", "", "stake session cookie (env "+EnvSession+")")
+	fs.StringVar(&cfg.Casino, "casino", CasinoWolfbet, "casino to play: wolfbet|stake")
 	fs.StringVar(&cfg.Currency, "currency", DefaultCurrency, "coin to bet (e.g. trx)")
 	fs.StringVar(&cfg.Script, "script", "", "path to the .lua user script")
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "paper trading: simulate rolls, no real bets")
@@ -87,6 +98,9 @@ func Parse(args []string) (*Config, error) {
 	if v := os.Getenv(EnvUserHash); v != "" && !set["user-hash"] {
 		cfg.UserHash = v
 	}
+	if v := os.Getenv(EnvSession); v != "" && !set["session"] {
+		cfg.Session = v
+	}
 
 	return cfg, cfg.Validate()
 }
@@ -100,11 +114,20 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("script file: %w", err)
 	}
 	if !c.DryRun {
-		if c.Token == "" {
-			return fmt.Errorf("token is required (or use --dry-run): --token, %s or TOML config", EnvToken)
-		}
-		if c.UserHash == "" {
-			return fmt.Errorf("user-hash is required (or use --dry-run): --user-hash, %s or TOML config", EnvUserHash)
+		switch c.Casino {
+		case CasinoWolfbet:
+			if c.Token == "" {
+				return fmt.Errorf("token is required (or use --dry-run): --token, %s or TOML config", EnvToken)
+			}
+			if c.UserHash == "" {
+				return fmt.Errorf("user-hash is required (or use --dry-run): --user-hash, %s or TOML config", EnvUserHash)
+			}
+		case CasinoStake:
+			if c.Session == "" {
+				return fmt.Errorf("session is required (or use --dry-run): --session, %s or TOML config", EnvSession)
+			}
+		default:
+			return fmt.Errorf("unknown casino %q (want %s or %s)", c.Casino, CasinoWolfbet, CasinoStake)
 		}
 	}
 	if c.Currency == "" {
@@ -154,6 +177,14 @@ func applyToml(cfg *Config, path string, set map[string]bool) error {
 		case "user_hash":
 			if !set["user-hash"] {
 				cfg.UserHash = val
+			}
+		case "session":
+			if !set["session"] {
+				cfg.Session = val
+			}
+		case "casino":
+			if !set["casino"] {
+				cfg.Casino = val
 			}
 		case "currency":
 			if !set["currency"] {

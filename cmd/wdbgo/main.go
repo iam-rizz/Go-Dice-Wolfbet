@@ -22,6 +22,7 @@ import (
 	"wdb-go/internal/dryrun"
 	"wdb-go/internal/engine"
 	"wdb-go/internal/lua"
+	"wdb-go/internal/stake"
 	"wdb-go/internal/state"
 	"wdb-go/internal/tui"
 	"wdb-go/internal/wolfbet"
@@ -56,41 +57,69 @@ func run() error {
 	st.Currency = strings.ToLower(cfg.Currency)
 	st.Coin = strings.ToUpper(cfg.Currency)
 
-	// ---- placer: live wolfbet or dry-run sim ----
-	var client *wolfbet.Client
+	// ---- placer: live casino client or dry-run sim ----
 	var placer engine.BetPlacer
 	var startBalance float64 = dryRunPaperBalance
+	var api casinoAPI // bridge callbacks (checkbalance/resetseed)
 
-	hasCreds := cfg.Token != "" && cfg.UserHash != ""
-	if hasCreds {
-		client = wolfbet.New(cfg.BaseURL, cfg.Token, cfg.UserHash)
-		// Fetch the real wallet balance in live mode too — the TUI and the
-		// script's top-level reads must show the actual currency balance,
-		// not the paper default. Fall back to paper balance only if the call
-		// fails.
-		bal, err := fetchBalance(ctx, client, st.Currency)
-		if err == nil {
-			startBalance = bal
-		} else {
-			fmt.Fprintf(os.Stderr, "wdbgo: could not read %s balance (%v), using paper balance %v\n",
-				st.Currency, err, dryRunPaperBalance)
+	hasCreds := false
+	switch cfg.Casino {
+	case config.CasinoStake:
+		hasCreds = cfg.Session != ""
+		if hasCreds {
+			sc := stake.New(cfg.BaseURL, cfg.Session)
+			api = stakeAPI{c: sc}
+			// Fetch the real wallet balance in live mode too — the TUI and
+			// the script's top-level reads must show the actual balance.
+			bal, err := fetchStakeBalance(ctx, sc, st.Currency)
+			if err == nil {
+				startBalance = bal
+			} else {
+				fmt.Fprintf(os.Stderr, "wdbgo: could not read %s balance (%v), using paper balance %v\n",
+					st.Currency, err, dryRunPaperBalance)
+			}
+			if !cfg.DryRun {
+				placer = &stakePlacer{client: sc}
+			}
+		}
+	default: // wolfbet
+		hasCreds = cfg.Token != "" && cfg.UserHash != ""
+		if hasCreds {
+			wc := wolfbet.New(cfg.BaseURL, cfg.Token, cfg.UserHash)
+			api = wolfbetAPI{c: wc}
+			// Fetch the real wallet balance in live mode too — the TUI and the
+			// script's top-level reads must show the actual currency balance,
+			// not the paper default. Fall back to paper balance only if the call
+			// fails.
+			bal, err := fetchBalance(ctx, wc, st.Currency)
+			if err == nil {
+				startBalance = bal
+			} else {
+				fmt.Fprintf(os.Stderr, "wdbgo: could not read %s balance (%v), using paper balance %v\n",
+					st.Currency, err, dryRunPaperBalance)
+			}
+			if !cfg.DryRun {
+				placer = &wolfPlacer{client: wc}
+			}
 		}
 	}
 	if cfg.DryRun {
 		placer = dryrun.New(cfg.Seed, startBalance)
-	} else {
-		placer = &wolfPlacer{client: client}
 	}
 
 	st.Balance = startBalance
 	st.StartBalance = startBalance
 	st.Minbalance = startBalance
 	st.Maxbalance = startBalance
-	if hasCreds {
-		if settings, err := client.Currencies(ctx); err == nil {
-			if set, ok := settings[st.Currency]; ok {
-				st.Minbet = set.AmountMinimum.Float()
-				st.Maxbet = set.AmountMaximum.Float()
+	// min/max bet only exist on wolfbet; stake's bundle sets minbet=0 and
+	// maxbet=balance, which the state already defaults to.
+	if hasCreds && cfg.Casino != config.CasinoStake {
+		if wc, ok := api.(wolfbetAPI); ok {
+			if settings, err := wc.c.Currencies(ctx); err == nil {
+				if set, ok := settings[st.Currency]; ok {
+					st.Minbet = set.AmountMinimum.Float()
+					st.Maxbet = set.AmountMaximum.Float()
+				}
 			}
 		}
 	}
@@ -112,13 +141,14 @@ func run() error {
 	program := tea.NewProgram(model)
 
 	// ---- lua bridge with the 16 contract callbacks ----
-	bridge := lua.New(st, bridgeCallbacks(st, client, func(msg string) {
+	casinoHost := cfg.BaseURL
+	bridge := lua.New(st, bridgeCallbacks(st, api, func(msg string) {
 		program.Send(tui.LogMsg(msg))
 	}, func(reason string) {
 		if loop != nil {
 			loop.Stop(reason)
 		}
-	}), "wolfbet.com")
+	}), casinoHost)
 	defer bridge.Close()
 
 	// Inject state BEFORE loading the script so top-level reads of
@@ -223,6 +253,53 @@ func (w *wolfPlacer) PlaceBet(ctx context.Context, req engine.BetRequest) (engin
 	}, nil
 }
 
+// stakePlacer adapts the stake GraphQL client to the engine's BetPlacer.
+// Win is derived from the roll vs target exactly like the bundle's
+// handleStats: bethigh ? result > target : result < target.
+type stakePlacer struct {
+	client *stake.Client
+}
+
+func (s *stakePlacer) PlaceBet(ctx context.Context, req engine.BetRequest) (engine.BetOutcome, error) {
+	res, err := s.client.PlaceDiceBet(ctx, stake.DiceBet{
+		Amount:   req.Amount,
+		Chance:   req.Chance,
+		Bethigh:  req.Bethigh,
+		Currency: req.Currency,
+	})
+	if err != nil {
+		return engine.BetOutcome{}, err
+	}
+	won := res.Roll < res.Target
+	if req.Bethigh {
+		won = res.Roll > res.Target
+	}
+	return engine.BetOutcome{
+		Roll:   res.Roll,
+		Profit: res.Profit,
+		Won:    won,
+		Target: res.Target,
+		Nonce:  res.Nonce,
+		ID:     res.ID,
+		Amount: res.Amount,
+		// stake has no rate-limit header; the engine treats 0 as unknown.
+		RateLimitRemaining: 0,
+	}, nil
+}
+
+// fetchStakeBalance reads the wallet balance for one currency.
+func fetchStakeBalance(ctx context.Context, client *stake.Client, currency string) (float64, error) {
+	balances, err := client.Balances(ctx)
+	if err != nil {
+		return 0, err
+	}
+	bal, ok := stake.BalanceFor(balances, currency)
+	if !ok {
+		return 0, fmt.Errorf("no balance entry for %s", currency)
+	}
+	return bal, nil
+}
+
 // scriptRunner adapts the lua bridge to the engine's Script interface.
 type scriptRunner struct {
 	bridge *lua.Bridge
@@ -237,12 +314,51 @@ func (s *scriptRunner) RunDobet() error {
 	return nil
 }
 
+// casinoAPI is the subset of a casino client the Lua bridge needs:
+// balance refresh and seed rotation. Both wolfbet and stake implement it.
+type casinoAPI interface {
+	Balance(ctx context.Context, currency string) (float64, error)
+	RefreshSeed(ctx context.Context) error
+}
+
+// wolfbetAPI adapts the wolfbet client to casinoAPI.
+type wolfbetAPI struct{ c *wolfbet.Client }
+
+func (w wolfbetAPI) Balance(ctx context.Context, currency string) (float64, error) {
+	return fetchBalance(ctx, w.c, currency)
+}
+
+func (w wolfbetAPI) RefreshSeed(ctx context.Context) error {
+	return w.c.RefreshSeed(ctx)
+}
+
+// stakeAPI adapts the stake client to casinoAPI.
+type stakeAPI struct{ c *stake.Client }
+
+func (s stakeAPI) Balance(ctx context.Context, currency string) (float64, error) {
+	return fetchStakeBalance(ctx, s.c, currency)
+}
+
+func (s stakeAPI) RefreshSeed(ctx context.Context) error {
+	return s.c.RotateSeedPair(ctx, randomSeed())
+}
+
+// randomSeed generates a client seed for stake's RotateSeedPair.
+func randomSeed() string {
+	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, 10)
+	for i := range b {
+		b[i] = chars[time.Now().UnixNano()%int64(len(chars))]
+	}
+	return string(b)
+}
+
 // bridgeCallbacks implements the 16 contract functions against the CLI.
 // vault/unvault log "Not supported" like the wolf bundle; invest and
 // ching are no-ops; reset* reset the state counters.
 func bridgeCallbacks(
 	st *state.BotState,
-	client *wolfbet.Client,
+	client casinoAPI,
 	log func(string),
 	stop func(string),
 ) lua.Callbacks {
@@ -284,7 +400,7 @@ func bridgeCallbacks(
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			bal, err := fetchBalance(ctx, client, st.Currency)
+			bal, err := client.Balance(ctx, st.Currency)
 			if err != nil {
 				log("checkbalance failed: " + err.Error())
 				return st.Balance
